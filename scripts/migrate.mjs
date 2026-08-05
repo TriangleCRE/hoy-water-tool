@@ -3,7 +3,7 @@
 // and loads them with the starter data that used to be hard-coded in
 // index.html. Safe to re-run — it only seeds when the tables are empty.
 //
-// The API routes also run this automatically on first request, so running
+// The /api/* routes also run this automatically on first request, so running
 // this script by hand is optional; it's here mainly for local development
 // and for anyone who wants to seed the database before the first deploy.
 //
@@ -13,7 +13,7 @@
 // or simply:
 //   DATABASE_URL="postgres://..." node scripts/migrate.mjs
 
-import { ensureReady } from "../api/_lib/db.js";
+import { ensureReady } from "../lib/db.js";
 
 try {
   const result = await ensureReady();
