@@ -1,0 +1,13 @@
+{
+  "name": "hoy-water-tool",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Hoy Center water bill-back tool, backed by a Neon Postgres database.",
+  "type": "module",
+  "scripts": {
+    "migrate": "node scripts/migrate.mjs"
+  },
+  "dependencies": {
+    "pg": "^8.13.1"
+  }
+}
