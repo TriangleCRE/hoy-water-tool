@@ -13,6 +13,7 @@ import {
   makeSessionCookieValue,
   isValidSessionCookie,
 } from "./lib/auth.js";
+import dataRoutes from "./lib/data-routes.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC_DIR = path.join(__dirname, "public");
@@ -156,7 +157,9 @@ app.use((req, res, next) => {
   return res.status(401).type("text").send("Unauthorized");
 });
 
-// ---- Protected app (static site) -------------------------------------------
+// ---- Protected app (data API + static site) --------------------------------
+
+app.use("/api", dataRoutes);
 
 app.use(express.static(PUBLIC_DIR));
 
