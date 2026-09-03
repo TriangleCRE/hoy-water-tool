@@ -171,6 +171,7 @@ table{width:100%;border-collapse:collapse;}
   <div class="card">
     <h2>Tenant statements</h2>
     <div class="hint">A statement gathers every <b>unpaid</b> bill for a tenant (anything not marked Paid) into one PDF with a running total. Bills you mark Paid drop off automatically.</div>
+    <div class="row-actions"><button class="btn" id="genallstmt">Generate all tenant statements (PDF)</button></div>
     <div id="stmttable"></div>
   </div>
 </div>
@@ -194,8 +195,11 @@ const numOrNull=v=>{if(v===""||v==null)return null;const n=Number(v);return isFi
 const days=s=>s?Math.round(new Date(s).getTime()/86400000):null;
 const dayDiff=(a,b)=>(days(b)-days(a));
 const mid=(a,b)=>{const d=Math.round((days(a)+days(b))/2);return new Date(d*86400000).toISOString().slice(0,10);};
-const fmtD=s=>{if(!s)return "—";const p=s.split("-");return ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"][+p[1]-1]+" "+(+p[2])+" '"+p[0].slice(2);};
+const MONTHS=["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+const fmtD=s=>{if(!s)return "—";const p=s.split("-");return MONTHS[+p[1]-1]+" "+(+p[2])+" '"+p[0].slice(2);};
 const fmtPer=(a,b)=>(!a&&!b)?"(no dates)":fmtD(a)+" – "+fmtD(b);
+const fmtMonYr=()=>{const d=new Date();return MONTHS[d.getMonth()]+" "+d.getFullYear();};
+const pdfFilename=name=>(name+" - Water & Sewer Statement - "+fmtMonYr()).replace(/[\\/:*?"<>|]/g,"-");
 function active(t,bill){if(t.leaseStart&&bill.pend&&t.leaseStart>bill.pend)return false;if(t.leaseEnd&&bill.pstart&&t.leaseEnd<bill.pstart)return false;return true;}
 
 // ---- persistence (Neon Postgres via /api, see /api and /scripts/migrate.mjs) ----
@@ -504,10 +508,16 @@ function renderStmt(){const box=$("stmttable");
  let h='<table class="pt"><thead><tr><th class="l">Tenant</th><th>Outstanding bills</th><th>Total owed</th><th></th></tr></thead><tbody>';
  rows.forEach(r=>{h+='<tr><td class="l per">'+r.t.name+'</td><td>'+r.n+'</td><td>'+usd(r.amt)+'</td><td><button class="btn sm" data-stmt="'+r.t.k+'">Statement PDF</button></td></tr>';});
  h+='</tbody></table>';box.innerHTML=h;box.querySelectorAll("[data-stmt]").forEach(e=>e.addEventListener("click",()=>tenantStatement(e.dataset.stmt)));}
+function genAllStatements(){
+ const rows=BILLED.map(t=>{let amt=0;DB.bills.forEach(b=>{if(b.status!=="Paid"){const R=billComputed(b);const c=R.charges[t.k];if(c&&c>0)amt+=c;}});return {t,amt};}).filter(r=>r.amt>0);
+ if(!rows.length){flash("No unpaid tenant charges to generate statements for.");return;}
+ flash("Generating "+rows.length+" statement PDF"+(rows.length>1?"s":"")+" — allow pop-ups and save each as it opens.");
+ rows.forEach((r,i)=>tenantStatement(r.t.k,350+i*600));
+}
 
 // ---- INVOICE / STATEMENT PDF (print window) ----
 const INVCSS='<style>@page{size:letter;margin:.7in}*{font-family:Helvetica,Arial,sans-serif;color:#222;box-sizing:border-box}body{font-size:11pt;-webkit-print-color-adjust:exact;print-color-adjust:exact}'+
- '.inv{page-break-after:always}.top{display:flex;justify-content:space-between;border-bottom:3px solid #2da84e;padding-bottom:12px}'+
+ '.top{display:flex;justify-content:space-between;border-bottom:3px solid #2da84e;padding-bottom:12px}'+
  '.co{font-size:18pt;font-weight:700;color:#2da84e}.co .logo{height:46px;width:auto;display:block;margin-bottom:6px}.co small{display:block;font-size:8.5pt;font-weight:400;color:#666;margin-top:3px}'+
  '.ib{text-align:right}.ib h1{margin:0;font-size:15pt;letter-spacing:3px}.meta{font-size:9pt;color:#555;margin-top:4px}'+
  '.parties{display:flex;justify-content:space-between;margin-top:16px;font-size:9.5pt}.box{background:#f6faf7;border:1px solid #e2eee6;border-radius:6px;padding:9px 11px;width:47%}'+
@@ -524,29 +534,31 @@ function plusDays(iso,n){return new Date((days(iso)+n)*86400000).toISOString().s
 function invoiceBill(id){const b=DB.bills.find(x=>x.id===id);if(!b)return;const R=billComputed(b);
  if(!R.hasTotal||R.denom<=0){flash("This bill has no split yet.");return;}
  const per=fmtPer(b.pstart,b.pend);const dt=fmtD(todayISO()),due=fmtD(plusDays(todayISO(),30));
- let body="";BILLED.forEach(t=>{const c=R.charges[t.k],u=R.use[t.k],sh=(R.denom>0&&u>0)?u/R.denom:0;if(!c||c<=0)return;
-  const flag=(R.proxy||R.missing.length)?'<div class="calc" style="border-left-color:#b6801a;color:#7a5709">DRAFT — this period includes estimated usage; confirm before sending.</div>':'';
-  body+='<div class="inv">'+invHeader("HOY-"+b.id.slice(0,4)+"-"+t.k,dt,due)+
+ const toSend=BILLED.filter(t=>R.charges[t.k]>0);
+ if(!toSend.length){flash("No tenant charges to invoice for this bill.");return;}
+ toSend.forEach((t,i)=>{const c=R.charges[t.k],u=R.use[t.k],sh=(R.denom>0&&u>0)?u/R.denom:0;
+  const body='<div class="inv">'+invHeader("HOY-"+b.id.slice(0,4)+"-"+t.k,dt,due)+
    '<div class="parties"><div class="box"><div class="lbl">Bill To</div>'+t.legal+'<br>'+t.unit+'<br>729 Richmond Ave<br>Staunton, VA 24401</div>'+
    '<div class="box"><div class="lbl">Service</div>Water &amp; sewer re-billing<br>729 Richmond Ave (Hoy)<br>Period: '+per+'<br>Basis: submeter usage share</div></div>'+
    '<table><tr><th>Description</th><th class="r">Your usage</th><th class="r">Building usage</th><th class="r">Share</th><th class="r">Amount</th></tr>'+
    '<tr><td>Water &amp; sewer, '+t.unit+'</td><td class="r">'+fmt0(u)+' gal</td><td class="r">'+fmt0(R.denom)+' gal</td><td class="r">'+fmt1(sh*100)+'%</td><td class="r">'+usd(c)+'</td></tr></table>'+
-   '<div class="calc"><b>How this was calculated:</b> the City billed the building '+usd(R.total)+' for this period (water + sewer + tax). Each unit pays that total times its share of submetered usage: '+fmt0(u)+' ÷ '+fmt0(R.denom)+' = '+fmt1(sh*100)+'% × '+usd(R.total)+' = <b>'+usd(c)+'</b>.</div>'+flag+
+   '<div class="calc"><b>How this was calculated:</b> the City billed the building '+usd(R.total)+' for this period (water + sewer + tax). Each unit pays that total times its share of submetered usage: '+fmt0(u)+' ÷ '+fmt0(R.denom)+' = '+fmt1(sh*100)+'% × '+usd(R.total)+' = <b>'+usd(c)+'</b>.</div>'+
    '<div class="tot"><div class="amt"><div class="k">AMOUNT DUE</div><div class="v">'+usd(c)+'</div></div></div>'+
-   '<div class="pay"><b>Remit to:</b> Triangle Investments / TPA LLC, 2903 N Augusta St, Staunton, VA 24401.</div></div>';});
- openPrint("<html><head><title>Hoy invoices "+per+"</title>"+INVCSS+"</head><body>"+body+"</body></html>");}
-function tenantStatement(k){const t=TENANTS.find(x=>x.k===k);const dt=fmtD(todayISO());
- const rows=[];let total=0;DB.bills.forEach(b=>{if(b.status!=="Paid"){const R=billComputed(b);const c=R.charges[k];if(c&&c>0){rows.push({per:fmtPer(b.pstart,b.pend),c,est:(R.proxy||R.missing.length)});total+=c;}}});
+   '<div class="pay"><b>Remit to:</b> Triangle Investments / TPA LLC, 2903 N Augusta St, Staunton, VA 24401.</div></div>';
+  openPrint("<html><head><title>"+pdfFilename(t.name)+"</title>"+INVCSS+"</head><body>"+body+"</body></html>",350+i*600);});
+ if(toSend.length>1)flash("Generating "+toSend.length+" invoice PDFs — allow pop-ups and save each as it opens.");}
+function tenantStatement(k,delay){const t=TENANTS.find(x=>x.k===k);const dt=fmtD(todayISO());
+ const rows=[];let total=0;DB.bills.forEach(b=>{if(b.status!=="Paid"){const R=billComputed(b);const c=R.charges[k];if(c&&c>0){rows.push({per:fmtPer(b.pstart,b.pend),c});total+=c;}}});
  if(!rows.length){flash("No outstanding bills for "+t.name+".");return;}
- let tr="";rows.forEach(r=>{tr+='<tr><td>'+r.per+(r.est?' <span style="color:#b6801a">(est.)</span>':'')+'</td><td class="r">'+usd(r.c)+'</td></tr>';});
+ let tr="";rows.forEach(r=>{tr+='<tr><td>'+r.per+'</td><td class="r">'+usd(r.c)+'</td></tr>';});
  const body='<div class="inv">'+invHeader("HOY-STMT-"+k,dt,fmtD(plusDays(todayISO(),30)))+
   '<div class="parties"><div class="box"><div class="lbl">Statement For</div>'+t.legal+'<br>'+t.unit+'<br>729 Richmond Ave<br>Staunton, VA 24401</div>'+
   '<div class="box"><div class="lbl">Summary</div>Outstanding water &amp; sewer re-billing<br>'+rows.length+' unpaid period(s)<br>Statement date: '+dt+'</div></div>'+
   '<table class="tr"><tr><th>Billing period</th><th class="r">Amount</th></tr>'+tr+'<tr><td>Total due</td><td class="r">'+usd(total)+'</td></tr></table>'+
   '<div class="tot"><div class="amt"><div class="k">TOTAL DUE</div><div class="v">'+usd(total)+'</div></div></div>'+
   '<div class="pay"><b>Remit to:</b> Triangle Investments / TPA LLC, 2903 N Augusta St, Staunton, VA 24401. Covers all unpaid water bill-back periods to date.</div></div>';
- openPrint("<html><head><title>Statement "+t.name+"</title>"+INVCSS+"</head><body>"+body+"</body></html>");}
-function openPrint(html){const w=window.open("","_blank");if(!w){flash("Allow pop-ups to generate the PDF.");return;}w.document.write(html);w.document.close();setTimeout(()=>{w.focus();w.print();},350);}
+ openPrint("<html><head><title>"+pdfFilename(t.name)+"</title>"+INVCSS+"</head><body>"+body+"</body></html>",delay||350);}
+function openPrint(html,delay){const w=window.open("","_blank");if(!w){flash("Allow pop-ups to generate the PDF.");return;}w.document.write(html);w.document.close();setTimeout(()=>{w.focus();w.print();},delay||350);}
 
 // ---- AI import (bill + reading) ----
 const PROMPT="You are reading two documents for 729 Richmond Ave (Hoy Center), Staunton VA — City of Staunton water account 19396-51409: 1) the City water bill (Yardi), and 2) a Prism submeter reading work order.\\n\\nOutput ONLY this JSON (no commentary, no fences):\\n{\\n \\\"bill\\\": {\\\"period_start\\\":\\\"YYYY-MM-DD\\\",\\\"period_end\\\":\\\"YYYY-MM-DD\\\",\\\"hcf\\\":<n>,\\\"water\\\":<n>,\\\"sewer\\\":<n>,\\\"tax\\\":<n>},\\n \\\"reading\\\": {\\\"date\\\":\\\"YYYY-MM-DD\\\",\\\"meters\\\":{\\\"univ\\\":<gal>,\\\"pizza\\\":<gal>,\\\"amed\\\":<gal>,\\\"lend\\\":<gal>,\\\"trop\\\":<gal>,\\\"vac\\\":<gal>}}\\n}\\nRules: period dates are the bill's Reading Dates; hcf = Usage (100 cu.ft); water/sewer/tax = the WATER/SEWER/TAX-COMMERCIAL charges. reading.date = when the Prism reads were taken; meters in gallons, null if missing. Tenants: univ=University Cleaners, pizza=Pizza Hut, amed=Amedisys, lend=Lendmark, trop=Tropical Smoothie, vac=Vacant.";
@@ -585,6 +597,7 @@ $("currsel").addEventListener("change",()=>{CUR.currId=$("currsel").value||null;
 $("savebill").addEventListener("click",saveBill);
 $("newbill").addEventListener("click",newBill);
 $("geninv").addEventListener("click",async()=>{if(!CUR.id)await saveBill();if(CUR.id)invoiceBill(CUR.id);});
+$("genallstmt").addEventListener("click",genAllStatements);
 $("addread").addEventListener("click",addReading);
 $("copyprompt").addEventListener("click",()=>{try{navigator.clipboard.writeText(PROMPT.replace(/\\n/g,"\n"));}catch(e){}const b=$("copyprompt");b.textContent="Copied";b.classList.add("done");setTimeout(()=>{b.textContent="Copy prompt";b.classList.remove("done");},1400);});
 $("loadjson").addEventListener("click",loadAI);
