@@ -61,8 +61,6 @@ table{width:100%;border-collapse:collapse;}
 .bt td.owe{font-weight:700;} .bt tr.totrow td{border-top:2px solid var(--green);background:var(--green-wash);font-weight:750;border-bottom:none;}
 .note{font-size:12px;padding:8px 10px;border-radius:8px;margin-top:8px;}
 .note.ok{background:var(--green-wash);color:var(--green-d);} .note.est{background:var(--amber-wash);color:#7a5709;} .note.err{background:var(--red-wash);color:var(--red);}
-.recon{margin-top:14px;border:1px dashed #c9d6cd;border-radius:10px;background:#fbfcfb;padding:12px 14px;}
-.recon .r{display:flex;flex-wrap:wrap;gap:18px;} .recon .s{display:flex;flex-direction:column;} .recon .s b{font-size:16px;} .recon .s span{font-size:10px;text-transform:uppercase;color:var(--faint);}
 .flags{margin-top:12px;display:flex;flex-direction:column;gap:7px;} .flag{font-size:12.5px;padding:8px 11px;border-radius:8px;display:flex;gap:8px;}
 .flag.warn{background:var(--amber-wash);color:#7a5709;} .flag.err{background:var(--red-wash);color:#8c2b20;} .flag.info{background:var(--blue-wash);color:#245a82;}
 .pt{font-size:12.5px;} .pt th{background:#f0f4f1;color:var(--muted);font-size:10px;text-transform:uppercase;padding:7px 8px;text-align:right;font-weight:700;border-bottom:1px solid var(--line);} .pt th.l{text-align:left;}
@@ -143,7 +141,6 @@ table{width:100%;border-collapse:collapse;}
     <h2>Bill-back by tenant</h2>
     <table class="bt"><thead><tr><th class="l">Tenant</th><th>Usage (gal)</th><th>Share</th><th class="last">Owes</th></tr></thead><tbody id="btbody"></tbody></table>
     <div id="tie" class="note ok"></div><div id="complete" class="note est" style="display:none"></div>
-    <div class="recon" id="recon"></div>
     <div class="flags" id="flags"></div>
     <div class="mh"><h2 style="margin:0">Yardi charge memos</h2><button class="btn sm sec" id="copyall">Copy all</button></div>
     <div class="memos" id="memos"></div>
@@ -179,7 +176,7 @@ table{width:100%;border-collapse:collapse;}
 </div>
 
 <div class="foot">
-  Method: the full City bill (water + sewer + tax) is split across the occupied tenants by each one's share of submeter usage, so the whole bill is recovered. HCF→gallons at ×750 (display/reconciliation only). Usage for each bill is pulled from the readings log; when the logged reads don't line up with the bill period it's marked <b>estimated</b>. Data auto-saves to the database and can be exported to a file. Invoices open in a print window — choose “Save as PDF”.
+  Method: the full City bill (water + sewer + tax) is split across the occupied tenants by each one's share of submeter usage, so the whole bill is recovered. Usage for each bill is pulled from the readings log; when the logged reads don't line up with the bill period it's marked <b>estimated</b>. Data auto-saves to the database and can be exported to a file. Invoices open in a print window — choose “Save as PDF”.
 </div>
 </div>
 <script>
@@ -323,25 +320,23 @@ function readForm(){return {id:CUR.id,pstart:$("pstart").value,pend:$("pend").va
 function computeSplit(bill,prevRead,currRead){
  const total=(bill.water||0)+(bill.sewer||0)+(bill.tax||0);
  const hasTotal=[bill.water,bill.sewer,bill.tax].some(v=>v!=null);
- const master=(bill.hcf||0)*750;
- const use={},flags=[];let allSub=0;
+ const use={},flags=[];
  TENANTS.forEach(t=>{let u=null;
   if(prevRead&&currRead){const p=prevRead.meters[t.k],c=currRead.meters[t.k];
    if(p!=null&&c!=null){u=c-p;if(u<0){flags.push({t:"err",m:t.name+": reading went backward ("+fmt0(p)+" → "+fmt0(c)+"). Check it; treated as 0."});u=0;}}}
-  use[t.k]=u;if(u!=null)allSub+=u;});
+  use[t.k]=u;});
  const act=BILLED.filter(t=>active(t,bill));const actKeys=act.map(t=>t.k);
  const inactive=BILLED.filter(t=>!active(t,bill)).map(t=>t.name);
  let denom=0;act.forEach(t=>{if(use[t.k]&&use[t.k]>0)denom+=use[t.k];});
  const charges={};BILLED.forEach(t=>charges[t.k]=null);let run=0;
  if(hasTotal&&denom>0)act.forEach((t,i)=>{if(i<act.length-1){const c=Math.round((use[t.k]>0?use[t.k]:0)/denom*total*100)/100;charges[t.k]=c;run+=c;}else charges[t.k]=Math.round((total-run)*100)/100;});
  const missing=act.filter(t=>use[t.k]===null).map(t=>t.name);
- const cap=master>0?allSub/master:null;
  let proxy=false,proxyNote="";
  if(prevRead&&currRead){const afterStart=dayDiff(bill.pstart,prevRead.date),beforeEnd=dayDiff(currRead.date,bill.pend);
   const winLen=dayDiff(prevRead.date,currRead.date),billLen=dayDiff(bill.pstart,bill.pend);
   proxy=(afterStart>20)||(beforeEnd>20)||(billLen>0&&winLen>billLen*1.7);
   if(proxy)proxyNote="Estimated: the logged reads ("+fmtD(prevRead.date)+" and "+fmtD(currRead.date)+") don't line up with this bill period, so the split uses the nearest available window.";}
- return {total,hasTotal,master,use,denom,charges,missing,inactive,actKeys,cap,flags,proxy,proxyNote,prevRead,currRead};
+ return {total,hasTotal,use,denom,charges,missing,inactive,actKeys,flags,proxy,proxyNote,prevRead,currRead};
 }
 
 // leak / spike detection using the whole log
@@ -400,19 +395,9 @@ function renderSplit(){
  if(R.missing.length)bits.push(R.missing.join(", ")+" had no reading this period, so "+(R.missing.length>1?"they are":"it is")+" left out and the others cover the full bill.");
  if(R.proxy)bits.push(R.proxyNote);
  if(bits.length){cmp.style.display="block";cmp.className="note est";cmp.innerHTML="⚑ "+bits.join(" ");}else cmp.style.display="none";
- // reconciliation
- $("recon").innerHTML=(bill.hcf==null)?'<span class="mini">Enter HCF for the master-vs-tenant reconciliation.</span>':
-  '<div class="r"><div class="s"><b>'+fmt0(R.master)+'</b><span>master gal</span></div><div class="s"><b>'+fmt0(R.master- (R.master-Object.keys(R.use).reduce((a,k)=>a+(R.use[k]||0),0)) )+'</b><span>&nbsp;</span></div></div>';
- const allSub=Object.keys(R.use).reduce((a,k)=>a+(R.use[k]||0),0);
- $("recon").innerHTML=(bill.hcf==null)?'<span class="mini">Enter HCF for the master-vs-tenant reconciliation.</span>':
-  '<div class="r"><div class="s"><b>'+fmt0(R.master)+'</b><span>master gal (HCF×750)</span></div>'+
-  '<div class="s"><b>'+fmt0(allSub)+'</b><span>submeter gal</span></div>'+
-  '<div class="s"><b>'+fmt0(R.master-allSub)+'</b><span>unmetered gap</span></div>'+
-  '<div class="s"><b>'+(R.cap!=null?fmt1(R.cap*100)+"%":"—")+'</b><span>captured</span></div></div>';
  // flags
  const fl=$("flags");fl.innerHTML="";const flags=R.flags.slice();
  TENANTS.filter(t=>t.billed&&t.leaseStart&&R.inactive.indexOf(t.name)>=0).forEach(t=>flags.push({t:"info",m:t.name+" is not billed this period — lease began "+fmtD(t.leaseStart)+"."}));
- if(R.cap!=null&&allSub>0&&R.cap>1.02)flags.push({t:"warn",m:"Submeters exceed the master meter — possible leak on a tenant line or a misread. Look before billing."});
  if(prevRead&&currRead){const dd=dayDiff(prevRead.date,currRead.date);BILLED.forEach(t=>{const u=R.use[t.k];if(u&&dd>0){const med=medianPerDay(t.k);if(med&&med>0&&(u/dd)>med*3&&u>500)flags.push({t:"warn",m:t.name+": usage this period ("+fmt0(u)+" gal) runs well above its usual rate — possible leak or a misread meter."});}});}
  flags.forEach(f=>{const d=document.createElement("div");d.className="flag "+(f.t==="err"?"err":f.t==="info"?"info":"warn");d.innerHTML='<span>'+(f.t==="err"?"!":"⚑")+'</span><span>'+f.m+'</span>';fl.appendChild(d);});
  {const per=fmtPer(bill.pstart,bill.pend);const mm=$("memos");mm.innerHTML="";window.__memos=[];
@@ -490,17 +475,17 @@ function renderBills(){const sum=$("billsummary"),box=$("billstable");
  if(!DB.bills.length){sum.innerHTML="";box.innerHTML='<div class="empty">No bills yet. Add one under “Split a bill.”</div>';return;}
  let totRec=0,paid=0,out=0;DB.bills.forEach(b=>{const R=billComputed(b);totRec+=R.total;if(b.status==="Paid")paid+=R.total;if(b.status!=="Paid")out+=R.total;});
  sum.innerHTML='<div class="pcards"><div class="pcard"><b>'+DB.bills.length+'</b><span>bills</span></div><div class="pcard"><b>'+usd(totRec)+'</b><span>total billed back</span></div><div class="pcard"><b>'+usd(out)+'</b><span>unpaid</span></div><div class="pcard"><b>'+usd(paid)+'</b><span>paid</span></div></div>';
- let h='<table class="pt"><thead><tr><th class="l">Period</th><th class="l">Status</th><th>City $</th><th>Cap%</th>'+BILLED.map(t=>'<th>'+t.short+'</th>').join("")+'<th class="l">Notes/flags</th><th></th></tr></thead><tbody>';
+ let h='<table class="pt"><thead><tr><th class="l">Period</th><th class="l">Status</th><th>City $</th>'+BILLED.map(t=>'<th>'+t.short+'</th>').join("")+'<th class="l">Notes/flags</th><th></th></tr></thead><tbody>';
  const tot={};BILLED.forEach(t=>tot[t.k]=0);
  DB.bills.forEach(b=>{const R=billComputed(b);const est=R.missing.length||R.proxy;
   h+='<tr><td class="l per"><span class="lk" data-open="'+b.id+'">'+fmtPer(b.pstart,b.pend)+'</span>'+(est?' <span class="warnflag" title="Estimated period">⚑</span>':'')+'</td>';
   h+='<td class="l"><select class="statsel stat '+b.status+'" data-st="'+b.id+'">'+["Draft","Split","Invoiced","Paid"].map(function(o){return "<option"+(b.status===o?" selected":"")+">"+o+"</option>";}).join("")+'</select></td>';
-  h+='<td>'+usd(R.total)+'</td><td>'+(R.cap!=null?fmt1(R.cap*100)+"%":"—")+'</td>';
+  h+='<td>'+usd(R.total)+'</td>';
   BILLED.forEach(t=>{const c=R.charges[t.k];tot[t.k]+=(c||0);h+='<td>'+(c==null?"—":usd(c))+'</td>';});
-  const notes=[];if(R.proxy)notes.push("estimated window");if(R.missing.length)notes.push("no read: "+R.missing.join(", "));if(R.cap!=null&&R.cap>1.02)notes.push("submeters>master");if(b.notes)notes.push(b.notes);
+  const notes=[];if(R.proxy)notes.push("estimated window");if(R.missing.length)notes.push("no read: "+R.missing.join(", "));if(b.notes)notes.push(b.notes);
   h+='<td class="l mini">'+(notes.join(" · ")||"—")+'</td>';
   h+='<td class="mini" style="white-space:nowrap"><span class="lk" data-open="'+b.id+'">Open</span> · <span class="lk" data-inv="'+b.id+'">Invoices</span> · <button class="del" data-del="'+b.id+'">×</button></td></tr>';});
- h+='<tr class="tot"><td class="l">All bills</td><td></td><td>'+usd(totRec)+'</td><td>—</td>'+BILLED.map(t=>'<td>'+usd(tot[t.k])+'</td>').join("")+'<td></td><td></td></tr></tbody></table>';
+ h+='<tr class="tot"><td class="l">All bills</td><td></td><td>'+usd(totRec)+'</td>'+BILLED.map(t=>'<td>'+usd(tot[t.k])+'</td>').join("")+'<td></td><td></td></tr></tbody></table>';
  box.innerHTML=h;
  box.querySelectorAll("[data-open]").forEach(e=>e.addEventListener("click",()=>openBill(e.dataset.open)));
  box.querySelectorAll("[data-inv]").forEach(e=>e.addEventListener("click",()=>invoiceBill(e.dataset.inv)));
