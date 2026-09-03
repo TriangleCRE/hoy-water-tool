@@ -74,6 +74,7 @@ table{width:100%;border-collapse:collapse;}
 .empty{padding:20px;text-align:center;color:var(--faint);font-size:13px;border:1px dashed var(--line);border-radius:10px;background:#fbfcfb;}
 .foot{margin-top:20px;font-size:11.5px;color:var(--faint);line-height:1.6;}
 .warnflag{color:var(--amber);font-weight:700;cursor:help;}
+.readflag{color:var(--red);font-weight:800;font-size:16px;cursor:help;}
 .mh{display:flex;justify-content:space-between;align-items:center;margin-top:14px;}
 .memos .memo{display:flex;justify-content:space-between;gap:12px;align-items:center;border:1px solid var(--line);border-radius:9px;padding:8px 11px;margin-bottom:7px;}
 .memos code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:11.5px;}
@@ -308,6 +309,12 @@ function moveTip(e){const tp=$("tip"),pad=14;let x=e.clientX+pad,y=e.clientY+pad
  if(x+r.width>innerWidth-8)x=e.clientX-r.width-pad;if(y+r.height>innerHeight-8)y=e.clientY-r.height-pad;tp.style.left=x+"px";tp.style.top=y+"px";}
 function hideTip(){$("tip").style.display="none";}
 function hotBay(k,on){const g=$("bay-"+k);if(g)g.classList.toggle("hot",on);}
+// generic hover tooltip for any element with data-tip="…" (flag icons, etc.) — a real
+// tooltip we control, instead of relying on the native title attribute (which was
+// showing the "help" cursor without reliably popping the text).
+document.addEventListener("mouseover",e=>{const el=e.target.closest("[data-tip]");if(el){$("tip").innerHTML=el.dataset.tip;$("tip").style.display="block";moveTip(e);}});
+document.addEventListener("mousemove",e=>{if($("tip").style.display==="block"&&e.target.closest("[data-tip]"))moveTip(e);});
+document.addEventListener("mouseout",e=>{const el=e.target.closest("[data-tip]");if(el&&(!e.relatedTarget||!el.contains(e.relatedTarget)))hideTip();});
 
 // ---- reading selection for a period ----
 function sortedReads(){return DB.readings.filter(r=>r.date).slice().sort((a,b)=>a.date.localeCompare(b.date));}
@@ -473,7 +480,7 @@ async function delReading(id){if(!confirm("Delete this reading?"))return;
 function renderReads(){const box=$("readstable");if(!DB.readings.length){box.innerHTML='<div class="empty">No readings yet.</div>';return;}
  let h='<table class="pt"><thead><tr><th class="l">Date</th>'+TENANTS.map(t=>'<th>'+t.short+'</th>').join("")+'<th></th></tr></thead><tbody>';
  sortedReads().forEach(r=>{h+='<tr><td class="l per">'+fmtD(r.date)+'</td>'+TENANTS.map(t=>{const v=r.meters[t.k];const note=readingNote(r.date,t.k);
-   return '<td>'+(v==null?'<span class="mini">—</span>':fmt0(v))+(note?' <span class="warnflag" title="'+note.m.replace(/"/g,"&quot;")+'">⚑</span>':'')+'</td>';}).join("")+'<td><button class="del" data-del="'+r.id+'">×</button></td></tr>';});
+   return '<td>'+(v==null?'<span class="mini">—</span>':fmt0(v))+(note?' <span class="readflag" data-tip="'+note.m.replace(/"/g,"&quot;")+'">⚑</span>':'')+'</td>';}).join("")+'<td><button class="del" data-del="'+r.id+'">×</button></td></tr>';});
  h+='</tbody></table>';box.innerHTML=h;box.querySelectorAll("[data-del]").forEach(e=>e.addEventListener("click",()=>delReading(e.dataset.del)));}
 
 // ---- bills overview ----
@@ -488,7 +495,7 @@ function renderBills(){const sum=$("billsummary"),box=$("billstable");
  let h='<table class="pt"><thead><tr><th class="l">Period</th><th class="l">Status</th><th>City $</th>'+BILLED.map(t=>'<th>'+t.short+'</th>').join("")+'<th class="l">Notes/flags</th><th></th></tr></thead><tbody>';
  const tot={};BILLED.forEach(t=>tot[t.k]=0);
  DB.bills.forEach(b=>{const R=billComputed(b);const est=R.missing.length||R.proxy;
-  h+='<tr><td class="l per"><span class="lk" data-open="'+b.id+'">'+fmtPer(b.pstart,b.pend)+'</span>'+(est?' <span class="warnflag" title="Estimated period">⚑</span>':'')+'</td>';
+  h+='<tr><td class="l per"><span class="lk" data-open="'+b.id+'">'+fmtPer(b.pstart,b.pend)+'</span>'+(est?' <span class="warnflag" data-tip="Estimated period">⚑</span>':'')+'</td>';
   h+='<td class="l"><select class="statsel stat '+b.status+'" data-st="'+b.id+'">'+["Draft","Split","Invoiced","Paid"].map(function(o){return "<option"+(b.status===o?" selected":"")+">"+o+"</option>";}).join("")+'</select></td>';
   h+='<td>'+usd(R.total)+'</td>';
   BILLED.forEach(t=>{const c=R.charges[t.k];tot[t.k]+=(c||0);h+='<td>'+(c==null?"—":usd(c))+'</td>';});
